@@ -9,10 +9,12 @@ WhenRule 是一个轻量级的 **Java 时间规则匹配库**。通过链式 Bui
 ## 特性
 
 - **链式 API**：Fluent Builder，条件组合清晰易读
-- **多种时间维度**：时间区间、节假日/工作日、周末、指定年/月/日/周几
+- **多种时间维度**：时间区间、每日时间窗口、节假日/工作日、周末、指定年/月/日/周几
+- **跨午夜支持**：每日时间窗口支持跨日（如 22:00 ~ 次日 02:00）
+- **AND / OR 多段组合**：通过 `.and()` / `.or()` 组合多组条件，从左到右求值
 - **中国节假日支持**：内置 2007–2027 年中国法定节假日与调休数据（JSON）
 - **调休感知**：正确处理「周末补班」与「工作日放假」
-- **灵活匹配模式**：支持 `ALL`（全部满足）与 `ANY`（任一满足）
+- **灵活匹配模式**：单段内支持 `ALL`（全部满足）与 `ANY`（任一满足）
 - **时区支持**：基于 `ZonedDateTime` 与地区时区配置
 
 ---
@@ -198,6 +200,57 @@ boolean result = WhenRule.when(builder);
 
 ---
 
+### 8. 每日时间窗口 `dailyTimeRange()`
+
+```java
+.dailyTimeRange(new WhenRuleDailyTimeRange(LocalTime.of(14, 0), LocalTime.of(17, 0)))
+```
+
+与 `timeRange()` 的区别：**只关心时分秒，不绑定具体日期**，适合表达「每天/每个工作日的某个固定时段」。
+
+| 参数 | 说明 |
+|------|------|
+| `startTime` | 开始时间（`LocalTime`），`null` 表示无下限 |
+| `endTime` | 结束时间（`LocalTime`），`null` 表示无上限 |
+
+- 边界为**闭区间** `[start, end]`
+- **跨午夜**：当 `startTime` 晚于 `endTime` 时（例如 `22:00 ~ 02:00`）自动按跨日处理
+
+```java
+// 每天晚上 22:00 ~ 次日 02:00
+.dailyTimeRange(new WhenRuleDailyTimeRange(LocalTime.of(22, 0), LocalTime.of(2, 0)))
+```
+
+---
+
+## 多段条件组合（AND / OR）
+
+当一个条件组（单个 Builder 内的 ALL/ANY）无法表达需求时，可以用 `.and()` / `.or()` 把多组条件串起来。**保留基础配置**（`country` / `region` / `calculateTime` / `matchingModel`），后续段无需重复设置。
+
+```java
+// 「工作日下午 2~5 点」 OR 「周末上午 9~12 点」
+boolean matched = WhenRule.when(
+    new WhenRuleBuilder()
+        .calculateTime(ZonedDateTime.now(ZoneId.of("Asia/Shanghai")))
+        .holiday(false)
+        .dailyTimeRange(new WhenRuleDailyTimeRange(LocalTime.of(14, 0), LocalTime.of(17, 0)))
+        .or()
+        .weekend(true)
+        .dailyTimeRange(new WhenRuleDailyTimeRange(LocalTime.of(9, 0), LocalTime.of(12, 0)))
+);
+```
+
+### 求值规则
+
+- **从左到右顺序求值**，不区分 AND/OR 优先级
+  - `A .and() B .or() C` 等价于 `(A AND B) OR C`，**而非** `A AND (B OR C)`
+- 每个段内仍由 `matchingModel(ALL/ANY)` 控制条件之间的关系
+- 段间的 `.and()` / `.or()` 只用于段与段之间
+- `calculateTime`、`country`、`region`、`matchingModel` 这些基础配置在所有段间**自动保留**
+- 单段 Builder（不调用 `.and()` / `.or()`）行为与之前完全一致，向后兼容
+
+---
+
 ## 使用示例
 
 ### 仅在工作日 9:00–18:00 执行
@@ -250,6 +303,31 @@ WhenRule.when(
 );
 ```
 
+### 每个工作日下午 2:00–5:00（每日重复）
+
+```java
+WhenRule.when(
+    new WhenRuleBuilder()
+        .calculateTime(ZonedDateTime.now(ZoneId.of("Asia/Shanghai")))
+        .holiday(false)
+        .dailyTimeRange(new WhenRuleDailyTimeRange(LocalTime.of(14, 0), LocalTime.of(17, 0)))
+);
+```
+
+### 工作日下午 OR 周末上午（多段组合）
+
+```java
+WhenRule.when(
+    new WhenRuleBuilder()
+        .calculateTime(ZonedDateTime.now(ZoneId.of("Asia/Shanghai")))
+        .holiday(false)
+        .dailyTimeRange(new WhenRuleDailyTimeRange(LocalTime.of(14, 0), LocalTime.of(17, 0)))
+        .or()
+        .weekend(true)
+        .dailyTimeRange(new WhenRuleDailyTimeRange(LocalTime.of(9, 0), LocalTime.of(12, 0)))
+);
+```
+
 ---
 
 ## 节假日数据格式
@@ -293,9 +371,10 @@ mvn test
 
 ### 短期计划
 
-- [ ] **更强的自定义时间配置**
-  - 支持每日/每周重复时间段（如「每个工作日下午 2–5 点」）（完成，支持重复时间段配置dailyTimeRange）
-  - 支持跨天时间段与更灵活的组合规则（完成，支持 and和or语法 实现内部多条组合判断）
+- [x] **更强的自定义时间配置**
+  - [x] 支持每日/每周重复时间段（`dailyTimeRange` 已实现，参见「条件说明」第 8 节）
+  - [x] 支持跨天时间段（`dailyTimeRange` 跨午夜场景，如 22:00 ~ 次日 02:00）
+  - [x] 多段条件组合（`.and()` / `.or()` 语法）
 - [ ] **节假日数据存储升级**
   - 从 classpath JSON 迁移至数据库
   - 支持运行时动态更新，无需重新发布
@@ -322,14 +401,15 @@ mvn test
 ```
 WhenRule/
 ├── src/main/java/com/fkl/whenRule/
-│   ├── WhenRule.java              # 入口
-│   ├── WhenRuleBuilder.java       # 链式构建器
-│   ├── WhenRuleTimeRange.java     # 时间区间
-│   ├── condition/                 # 条件接口与实现
-│   ├── entity/                    # 数据实体
-│   └── enums/                     # 枚举（国家、地区、匹配模式）
-├── src/main/resources/holiday/cn/ # 中国节假日 JSON 数据
-└── src/test/java/                 # 单元测试
+│   ├── WhenRule.java                  # 入口
+│   ├── WhenRuleBuilder.java           # 链式构建器
+│   ├── WhenRuleTimeRange.java         # 绝对时间区间（LocalDateTime）
+│   ├── WhenRuleDailyTimeRange.java    # 每日时间窗口（LocalTime）
+│   ├── condition/                     # 条件接口与实现
+│   ├── entity/                        # 数据实体（含多段组合）
+│   └── enums/                         # 枚举（国家、地区、匹配模式、AND/OR）
+├── src/main/resources/holiday/cn/     # 中国节假日 JSON 数据
+└── src/test/java/                     # 单元测试
 ```
 
 ---
