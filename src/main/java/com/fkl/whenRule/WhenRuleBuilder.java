@@ -2,6 +2,8 @@ package com.fkl.whenRule;
 
 import com.fkl.whenRule.condition.RuleCondition;
 import com.fkl.whenRule.condition.impl.*;
+import com.fkl.whenRule.entity.WhenRuleBuilderCombination;
+import com.fkl.whenRule.enums.ActionEnums;
 import com.fkl.whenRule.enums.CountryEnums;
 import com.fkl.whenRule.enums.MatchingModelEnums;
 import com.fkl.whenRule.enums.RegionEnums;
@@ -21,6 +23,9 @@ import java.util.Objects;
 @Getter
 @Slf4j
 public class WhenRuleBuilder {
+
+    private final List<WhenRuleBuilderCombination> combinationList = new ArrayList<>();
+
     private final List<RuleCondition> conditionList = new ArrayList<>();
 
     /*
@@ -76,11 +81,29 @@ public class WhenRuleBuilder {
      * 指定年（4位数），例如2026，null表示不限制，空表示直接false
      * */
     private List<Integer> specifyYear = null;
+    /*
+     * 每日时间窗口（仅时分秒），start为空表示无下限，end为空表示无上限，
+     * 全为空或 null 表示无限制；start 晚于 end 表示跨午夜（如 22:00 ~ 02:00）
+     * */
+    private WhenRuleDailyTimeRange dailyTimeRange = null;
 
 
     /*
      * build方法
      * */
+
+    public WhenRuleBuilder and(){
+        combinationList.add(new WhenRuleBuilderCombination(ActionEnums.AND, this.copy()));
+        this.init();
+        return this;
+    }
+
+    public WhenRuleBuilder or(){
+        combinationList.add(new WhenRuleBuilderCombination(ActionEnums.OR, this.copy()));
+        this.init();
+        return this;
+    }
+
     public WhenRuleBuilder country(CountryEnums country) {
         if (Objects.isNull(country)) {
             log.error("国家不能为空");
@@ -164,11 +187,63 @@ public class WhenRuleBuilder {
         return this;
     }
 
+    public WhenRuleBuilder dailyTimeRange(WhenRuleDailyTimeRange dailyTimeRange) {
+        if (Objects.isNull(dailyTimeRange)) {
+            log.error("每日时间窗口不能为空");
+        } else {
+            this.dailyTimeRange = dailyTimeRange;
+            replaceCondition(DailyTimeRangeCondition.class, new DailyTimeRangeCondition(dailyTimeRange));
+        }
+        return this;
+    }
+
     private void replaceCondition(Class<? extends RuleCondition> type, RuleCondition condition) {
         conditionList.removeIf(type::isInstance);
         if (Objects.nonNull(condition)) {
             conditionList.add(condition);
         }
+    }
+
+    /**
+     * 重置判断字段以进入下一个条件组。
+     * 保留基础配置（country / region / calculateTime / matchingModel），
+     * 避免用户在每个段重复设置。
+     */
+    public void init(){
+        this.timeRange = null;
+        this.holiday = null;
+        this.weekend = null;
+        this.specifyDay = null;
+        this.specifyWeekday = null;
+        this.specifyMonth = null;
+        this.specifyYear = null;
+        this.dailyTimeRange = null;
+        this.conditionList.clear();
+    }
+
+    public WhenRuleBuilder copy(){
+        WhenRuleBuilder whenRuleBuilder = new WhenRuleBuilder();
+        whenRuleBuilder.country(this.country);
+        whenRuleBuilder.region(this.region);
+        whenRuleBuilder.calculateTime(this.calculateTime);
+        whenRuleBuilder.matchingModel(this.matchingModel);
+        if (Objects.nonNull(this.timeRange)) {
+            whenRuleBuilder.timeRange(this.timeRange);
+        }
+        if (Objects.nonNull(this.holiday)) {
+            whenRuleBuilder.holiday(this.holiday);
+        }
+        if (Objects.nonNull(this.weekend)) {
+            whenRuleBuilder.weekend(this.weekend);
+        }
+        whenRuleBuilder.specifyDay(this.specifyDay);
+        whenRuleBuilder.specifyWeekday(this.specifyWeekday);
+        whenRuleBuilder.specifyMonth(this.specifyMonth);
+        whenRuleBuilder.specifyYear(this.specifyYear);
+        if (Objects.nonNull(this.dailyTimeRange)) {
+            whenRuleBuilder.dailyTimeRange(this.dailyTimeRange);
+        }
+        return whenRuleBuilder;
     }
 
     // 根据国家/地区返回默认时区
