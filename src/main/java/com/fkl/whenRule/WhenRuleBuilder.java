@@ -2,6 +2,8 @@ package com.fkl.whenRule;
 
 import com.fkl.whenRule.condition.RuleCondition;
 import com.fkl.whenRule.condition.impl.*;
+import com.fkl.whenRule.condition.impl.holiday.HolidayDataProvider;
+import com.fkl.whenRule.condition.impl.holiday.JdbcHolidayDataProvider;
 import com.fkl.whenRule.entity.WhenRuleBuilderCombination;
 import com.fkl.whenRule.enums.ActionEnums;
 import com.fkl.whenRule.enums.CountryEnums;
@@ -14,6 +16,7 @@ import java.time.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import javax.sql.DataSource;
 
 /**
  * @author fkl
@@ -48,6 +51,11 @@ public class WhenRuleBuilder {
      * 匹配条件
      * */
     private MatchingModelEnums matchingModel = MatchingModelEnums.ALL;
+
+    /*
+     * 调用级节假日数据源（可空），仅本次规则计算生效，优先级高于 WhenRuleConfig 全局配置
+     * */
+    private HolidayDataProvider holidayDataProvider = null;
 
     /*
      * ----------------------------------------判断字段-----------------------------------
@@ -86,6 +94,10 @@ public class WhenRuleBuilder {
      * 全为空或 null 表示无限制；start 晚于 end 表示跨午夜（如 22:00 ~ 02:00）
      * */
     private WhenRuleDailyTimeRange dailyTimeRange = null;
+    /*
+     * true: 每月最后一天
+     * */
+    private Boolean lastDayOfMonth = null;
 
 
     /*
@@ -153,9 +165,40 @@ public class WhenRuleBuilder {
 
     public WhenRuleBuilder holiday(boolean holiday) {
         this.holiday = holiday;
-        replaceCondition(HolidayCondition.class, new HolidayCondition(holiday));
+        replaceCondition(HolidayCondition.class, new HolidayCondition(holiday, holidayDataProvider));
         return this;
     }
+
+    /**
+     * 设置调用级节假日数据源（仅本次规则计算生效，不影响全局 {@link com.fkl.whenRule.config.WhenRuleConfig}）。
+     * <p>
+     * 调用顺序无要求：无论 {@link #holiday(boolean)} 在前还是在后，最终都会作用到当前 builder 内已存在的
+     * {@link HolidayCondition} 上。
+     *
+     * @param holidayDataProvider 自定义数据源；传 {@code null} 表示回退到全局
+     */
+    public WhenRuleBuilder holidayDataProvider(HolidayDataProvider holidayDataProvider) {
+        this.holidayDataProvider = holidayDataProvider;
+        // 同步给已存在的 HolidayCondition 实例（避免调用顺序敏感）
+        for (RuleCondition condition : conditionList) {
+            if (condition instanceof HolidayCondition) {
+                ((HolidayCondition) condition).setHolidayDataProvider(holidayDataProvider);
+            }
+        }
+        return this;
+    }
+
+    /**
+     * 设置调用级 JDBC 节假日数据源（内部封装为 {@link JdbcHolidayDataProvider}）。
+     * 传 {@code null} 表示回退到全局配置。
+     */
+    public WhenRuleBuilder holidayDataSource(DataSource dataSource) {
+        if (Objects.isNull(dataSource)) {
+            return holidayDataProvider(null);
+        }
+        return holidayDataProvider(new JdbcHolidayDataProvider(dataSource));
+    }
+
 
     public WhenRuleBuilder weekend(boolean weekend) {
         this.weekend = weekend;
@@ -197,6 +240,12 @@ public class WhenRuleBuilder {
         return this;
     }
 
+    public WhenRuleBuilder lastDayOfMonth() {
+        this.lastDayOfMonth = true;
+        replaceCondition(LastDayOfMonthCondition.class, new LastDayOfMonthCondition());
+        return this;
+    }
+
     private void replaceCondition(Class<? extends RuleCondition> type, RuleCondition condition) {
         conditionList.removeIf(type::isInstance);
         if (Objects.nonNull(condition)) {
@@ -218,6 +267,7 @@ public class WhenRuleBuilder {
         this.specifyMonth = null;
         this.specifyYear = null;
         this.dailyTimeRange = null;
+        this.lastDayOfMonth = null;
         this.conditionList.clear();
     }
 
@@ -227,6 +277,11 @@ public class WhenRuleBuilder {
         whenRuleBuilder.region(this.region);
         whenRuleBuilder.calculateTime(this.calculateTime);
         whenRuleBuilder.matchingModel(this.matchingModel);
+        // 注意：先复制 holidayDataProvider，再调用 holiday()，
+        // 这样新 builder 中的 HolidayCondition 实例能直接拿到自定义 provider
+        if (Objects.nonNull(this.holidayDataProvider)) {
+            whenRuleBuilder.holidayDataProvider(this.holidayDataProvider);
+        }
         if (Objects.nonNull(this.timeRange)) {
             whenRuleBuilder.timeRange(this.timeRange);
         }
@@ -242,6 +297,9 @@ public class WhenRuleBuilder {
         whenRuleBuilder.specifyYear(this.specifyYear);
         if (Objects.nonNull(this.dailyTimeRange)) {
             whenRuleBuilder.dailyTimeRange(this.dailyTimeRange);
+        }
+        if (Objects.nonNull(this.lastDayOfMonth)) {
+            whenRuleBuilder.lastDayOfMonth();
         }
         return whenRuleBuilder;
     }
